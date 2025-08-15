@@ -1,7 +1,5 @@
-use axplat::mem::PhysAddr;
+use axplat::mem::{PhysAddr, phys_to_virt};
 use loongArch64::ipi::{csr_mail_send, send_ipi_single};
-
-use crate::mem::phys_to_virt;
 
 const ACTION_BOOT_CPU: u32 = 1;
 

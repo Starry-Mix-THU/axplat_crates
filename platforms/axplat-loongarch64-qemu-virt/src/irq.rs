@@ -1,5 +1,4 @@
 use axplat::irq::{HandlerTable, IrqHandler, IrqIf};
-use lazyinit::LazyInit;
 use loongArch64::register::{
     ecfg::{self, LineBasedInterrupt},
     ticlr,
@@ -15,8 +14,7 @@ pub const MAX_IRQ_COUNT: usize = 0x20;
 
 static IRQ_HANDLER_TABLE: HandlerTable<MAX_IRQ_COUNT> = HandlerTable::new();
 
-static INIT: LazyInit<()> = LazyInit::new();
-fn init() {
+pub(crate) fn init() {
     eiointc::init();
     platic::init();
 }
@@ -35,8 +33,6 @@ impl IrqIf for IrqIfImpl {
             };
             ecfg::set_lie(new_value);
         } else {
-            INIT.call_once(init);
-
             if enabled {
                 eiointc::enable_irq(irq_num);
                 platic::enable_irq(irq_num);

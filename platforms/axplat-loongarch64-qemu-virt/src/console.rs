@@ -1,12 +1,23 @@
-use axplat::console::ConsoleIf;
+use axplat::{
+    console::ConsoleIf,
+    mem::{pa, phys_to_virt},
+};
 use kspin::SpinNoIrq;
-use ns16550a::Uart;
+use lazyinit::LazyInit;
+use uart_16550::MmioSerialPort;
 
-use crate::config::{devices::UART_PADDR, plat::PHYS_VIRT_OFFSET};
+use crate::config::devices::{UART_INTERRUPT, UART_PADDR};
 
-const UART_BASE: usize = PHYS_VIRT_OFFSET + UART_PADDR;
+static UART: LazyInit<SpinNoIrq<MmioSerialPort>> = LazyInit::new();
 
-static UART: SpinNoIrq<Uart> = SpinNoIrq::new(Uart::new(UART_BASE));
+pub(crate) fn init_early() {
+    UART.init_once({
+        let mut uart = unsafe { MmioSerialPort::new(phys_to_virt(pa!(UART_PADDR)).as_usize()) };
+        uart.init();
+        SpinNoIrq::new(uart)
+    });
+    axplat::console::init_console_irq(UART_INTERRUPT);
+}
 
 struct ConsoleIfImpl;
 
@@ -15,14 +26,14 @@ impl ConsoleIf for ConsoleIfImpl {
     /// Writes bytes to the console from input u8 slice.
     fn write_bytes(bytes: &[u8]) {
         for &c in bytes {
-            let uart = UART.lock();
+            let mut uart = UART.lock();
             match c {
                 b'\n' => {
-                    let _ = uart.put(b'\r');
-                    let _ = uart.put(b'\n');
+                    uart.send(b'\r');
+                    uart.send(b'\n');
                 }
                 c => {
-                    let _ = uart.put(c);
+                    uart.send(c);
                 }
             }
         }
@@ -31,20 +42,13 @@ impl ConsoleIf for ConsoleIfImpl {
     /// Reads bytes from the console into the given mutable slice.
     /// Returns the number of bytes read.
     fn read_bytes(bytes: &mut [u8]) -> usize {
-        let uart = UART.lock();
+        let mut uart = UART.lock();
         for (i, byte) in bytes.iter_mut().enumerate() {
-            match uart.get() {
-                Some(c) => *byte = c,
-                None => return i,
+            match uart.try_receive() {
+                Ok(c) => *byte = c,
+                Err(_) => return i,
             }
         }
         bytes.len()
-    }
-
-    fn enable_rx_interrupt() -> Option<usize> {
-        unsafe {
-            ((UART_BASE + 1) as *mut u8).write_volatile(1);
-        }
-        Some(crate::config::devices::UART_INTERRUPT)
     }
 }

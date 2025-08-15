@@ -1,10 +1,9 @@
-use crate::config::{devices::PLIC_PADDR, plat::CPU_NUM};
-use axplat::{
-    irq::{HandlerTable, IrqHandler, IrqIf},
-    mem::{pa, phys_to_virt},
+use crate::config::{
+    devices::PLIC_PADDR,
+    plat::{CPU_NUM, PHYS_VIRT_OFFSET},
 };
+use axplat::irq::{HandlerTable, IrqHandler, IrqIf};
 use core::sync::atomic::{AtomicPtr, Ordering};
-use lazyinit::LazyInit;
 use plic::{Mode, PLIC};
 use riscv::register::sie;
 
@@ -28,14 +27,12 @@ pub const MAX_IRQ_COUNT: usize = 1024;
 
 static IRQ_HANDLER_TABLE: HandlerTable<MAX_IRQ_COUNT> = HandlerTable::new();
 
-static PLIC: LazyInit<PLIC<CPU_NUM>> = LazyInit::new();
+static PLIC: PLIC<CPU_NUM> = unsafe { PLIC::new(PHYS_VIRT_OFFSET + PLIC_PADDR, [2; CPU_NUM]) };
 
-fn init_plic() -> PLIC<CPU_NUM> {
-    let plic = PLIC::new(phys_to_virt(pa!(PLIC_PADDR)).as_usize(), [2; CPU_NUM]);
+pub(crate) fn init() {
     for hart in 0..(CPU_NUM as u32) {
-        plic.set_threshold(hart, Mode::Supervisor, 0);
+        PLIC.set_threshold(hart, Mode::Supervisor, 0);
     }
-    plic
 }
 
 macro_rules! with_cause {
@@ -86,16 +83,14 @@ impl IrqIf for IrqIfImpl {
                 warn!("External IRQ should be got from PLIC, not scause");
             },
             @EX_IRQ => {
-                PLIC.call_once(init_plic);
-                let plic = &PLIC;
                 if enabled {
-                    plic.set_priority(irq as _, 6);
+                    PLIC.set_priority(irq as _, 6);
                     for hart in 0..(CPU_NUM as u32) {
-                        plic.enable(hart, Mode::Supervisor, irq as _);
+                        PLIC.enable(hart, Mode::Supervisor, irq as _);
                     }
                 } else {
                     for hart in 0..(CPU_NUM as u32) {
-                        plic.disable(hart, Mode::Supervisor, irq as _);
+                        PLIC.disable(hart, Mode::Supervisor, irq as _);
                     }
                 }
             }
@@ -153,7 +148,7 @@ impl IrqIf for IrqIfImpl {
                 warn!("External IRQ should be got from PLIC, not scause");
                 None
             },
-            @EX_IRQ => IRQ_HANDLER_TABLE.unregister_handler(irq)
+            @EX_IRQ => IRQ_HANDLER_TABLE.unregister_handler(irq).inspect(|_| Self::set_enable(irq, false))
         )
     }
 
@@ -174,13 +169,10 @@ impl IrqIf for IrqIfImpl {
                 }
             },
             @S_EXT => {
-                if !PLIC.is_inited() {
-                    return;
-                }
                 // TODO: hart
                 let irq = PLIC.claim(0, Mode::Supervisor);
                 if !IRQ_HANDLER_TABLE.handle(irq as _) {
-                    warn!("Unhandled IRQ {}", irq);
+                    debug!("Unhandled IRQ {irq}");
                 }
                 PLIC.complete(0, Mode::Supervisor, irq);
             },
