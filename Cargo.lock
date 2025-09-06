@@ -900,7 +900,7 @@ dependencies = [
 [[package]]
 name = "plic"
 version = "0.1.0"
-source = "git+https://github.com/Starry-Mix-THU/plic.git?rev=ee40f86#ee40f86b888280f291af815874e5f3cee9ee3b94"
+source = "git+https://github.com/Starry-OS/plic.git?rev=ee40f86#ee40f86b888280f291af815874e5f3cee9ee3b94"
 
 [[package]]
 name = "potential_utf"
